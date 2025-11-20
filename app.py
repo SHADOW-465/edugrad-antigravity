@@ -6,6 +6,380 @@ from utils import save_uploaded_file, cleanup_temp_files
 import json
 
 # Page Config
+st.set_page_config(page_title="AI Answer Grader", layout="wide", page_icon="🎓")
+
+# Initialize DB
+if 'db' not in st.session_state:
+    st.session_state.db = DatabaseManager()
+
+db = st.session_state.db
+
+# --- VIBRANT UI CSS ---
+st.markdown("""
+<style>
+    /* Global Font & Background */
+    @import url('https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;700&display=swap');
+    
+    html, body, [class*="css"] {
+        font-family: 'Outfit', sans-serif;
+    }
+    
+    .stApp {
+        background: linear-gradient(135deg, #f5f7fa 0%, #c3cfe2 100%);
+    }
+
+    /* Headers */
+    h1, h2, h3 {
+        color: #2c3e50;
+        font-weight: 700;
+    }
+    
+    .main-header {
+        background: linear-gradient(90deg, #6a11cb 0%, #2575fc 100%);
+        -webkit-background-clip: text;
+        -webkit-text-fill-color: transparent;
+        font-size: 3rem;
+        font-weight: 800;
+        margin-bottom: 1rem;
+    }
+
+    /* Cards */
+    .student-card {
+        background-color: white;
+        padding: 20px;
+        border-radius: 15px;
+        box-shadow: 0 10px 20px rgba(0,0,0,0.05);
+        margin-bottom: 15px;
+        border-left: 5px solid #6a11cb;
+        transition: transform 0.2s;
+    }
+    .student-card:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 15px 30px rgba(0,0,0,0.1);
+    }
+
+    /* Buttons */
+    .stButton>button {
+        border-radius: 12px;
+        height: 3.5em;
+        background: linear-gradient(90deg, #11998e 0%, #38ef7d 100%);
+        color: white;
+        font-weight: 600;
+        border: none;
+        box-shadow: 0 4px 15px rgba(0,0,0,0.1);
+        transition: all 0.3s ease;
+    }
+    .stButton>button:hover {
+        box-shadow: 0 8px 20px rgba(0,0,0,0.2);
+        transform: scale(1.02);
+    }
+    
+    /* Secondary Button (e.g. Delete/Cancel) */
+    .secondary-btn button {
+        background: linear-gradient(90deg, #ff5f6d 0%, #ffc371 100%);
+    }
+
+    /* Report Card */
+    .report-card {
+        background: white;
+        padding: 25px;
+        border-radius: 20px;
+        box-shadow: 0 10px 30px rgba(0,0,0,0.1);
+        text-align: center;
+        border: 1px solid #eee;
+    }
+    .score-big {
+        font-size: 3.5rem;
+        font-weight: 800;
+        background: linear-gradient(45deg, #11998e, #38ef7d);
+        -webkit-background-clip: text;
+        -webkit-text-fill-color: transparent;
+    }
+    
+    /* Sidebar */
+    [data-testid="stSidebar"] {
+        background-color: #ffffff;
+        border-right: 1px solid #eee;
+    }
+</style>
+""", unsafe_allow_html=True)
+
+# --- Sidebar: Auth & Settings ---
+with st.sidebar:
+    st.markdown("## 🏫 AI School Grader")
+    
+    # API Key
+    api_key = st.text_input("Gemini API Key", type="password")
+    if not api_key:
+        st.warning("Enter API Key to proceed.")
+        st.stop()
+        
+    # Model Selection
+    selected_model = None
+    try:
+        available_models = AIGrader.list_available_models(api_key)
+        if available_models:
+            selected_model = st.selectbox("AI Model", available_models, index=0)
+        else:
+            st.error("No models found.")
+    except:
+        pass
+
+    st.divider()
+    
+    # Language Settings
+    language = st.radio("Feedback Language", ["English", "Tamil"])
+    
+    st.divider()
+    # Role Selection
+    role = st.radio("Login As", ["Teacher", "Parent/Student"])
+
+# --- Teacher Dashboard ---
+if role == "Teacher":
+    st.markdown('<h1 class="main-header">👨‍🏫 Teacher Dashboard</h1>', unsafe_allow_html=True)
+    
+    tab1, tab2, tab3 = st.tabs(["Manage Classes", "Create Exam", "Grading & Results"])
+    
+    # 1. Manage Classes
+    with tab1:
+        col_c1, col_c2 = st.columns(2)
+        with col_c1:
+            st.subheader("Create New Class")
+            with st.form("create_class"):
+                c_name = st.text_input("Class Name (e.g., 10-A)")
+                c_level = st.selectbox("Grade Level", ["High School", "Higher Secondary", "College"])
+                if st.form_submit_button("Create Class"):
+                    db.create_class(c_name, c_level)
+                    st.success(f"Class {c_name} created!")
+        
+        with col_c2:
+            st.subheader("Add Student to Class")
+            classes = db.get_all_classes()
+            if classes:
+                c_options = {c[1]: c[0] for c in classes}
+                selected_class_name = st.selectbox("Select Class", list(c_options.keys()))
+                selected_class_id = c_options[selected_class_name]
+                
+                with st.form("add_student"):
+                    s_name = st.text_input("Student Name")
+                    s_roll = st.text_input("Roll Number")
+                    if st.form_submit_button("Add Student"):
+                        db.add_student(s_name, s_roll, selected_class_id)
+                        st.success(f"Student {s_name} added!")
+            else:
+                st.info("No classes found. Create one first.")
+
+    # 2. Create Exam
+    with tab2:
+        st.subheader("Schedule New Exam")
+        if classes:
+            with st.form("create_exam"):
+                e_name = st.text_input("Exam Name (e.g., Physics Mid-Term)")
+                e_subject = st.text_input("Subject")
+                e_class = st.selectbox("For Class", list(c_options.keys()), key="exam_class")
+                e_max = st.number_input("Max Marks", value=100)
+                e_qp = st.text_area("Paste Question Paper Text")
+                e_key = st.text_area("Paste Answer Key / Rubric")
+                
+                if st.form_submit_button("Create Exam"):
+                    cid = c_options[e_class]
+                    db.create_exam(e_name, e_subject, cid, e_qp, e_key, e_max)
+                    st.success(f"Exam {e_name} created!")
+        else:
+            st.warning("Create a class first.")
+
+    # 3. Grading & Results
+    with tab3:
+        # Select Class -> Exam
+        if classes:
+            sel_class_grad = st.selectbox("Select Class", list(c_options.keys()), key="grad_class")
+            cid_grad = c_options[sel_class_grad]
+            exams = db.get_exams_by_class(cid_grad)
+            
+            if exams:
+                exam_opts = {e[1]: e for e in exams}
+                sel_exam_name = st.selectbox("Select Exam", list(exam_opts.keys()))
+                selected_exam = exam_opts[sel_exam_name] # (id, name, subj, cid, qp, key, max)
+                exam_id = selected_exam[0]
+                
+                # List Students
+                students = db.get_students_by_class(cid_grad)
+                
+                st.divider()
+                
+                # Controls Row
+                c1, c2 = st.columns([2, 1])
+                with c1:
+                    st.markdown(f"### Grading: {sel_exam_name}")
+                with c2:
+                    strictness = st.select_slider("Grading Strictness", options=["Lenient", "Moderate", "Strict"], value="Moderate")
+
+                # --- BATCH GRADING BUTTON ---
+                if st.button("⚡ Grade All Pending Answer Sheets"):
+                    if selected_model:
+                        progress_bar = st.progress(0)
+                        graded_count = 0
+                        
+                        # We need to access uploaded files. 
+                        # Streamlit file_uploader widgets inside loops are accessible via session_state if keyed.
+                        for idx, stu in enumerate(students):
+                            stu_id = stu[0]
+                            stu_name = stu[1]
+                            
+                            # Check if file is uploaded in session state
+                            file_key = f"u_{stu_id}"
+                            if file_key in st.session_state and st.session_state[file_key] is not None:
+                                # Check if already graded
+                                sub = db.get_submission(exam_id, stu_id)
+                                if not sub or sub[6] != "Graded": # Status
+                                    
+                                    uploaded_file = st.session_state[file_key]
+                                    fpath = save_uploaded_file(uploaded_file)
+                                    
+                                    if fpath:
+                                        grader = AIGrader(api_key, selected_model)
+                                        res = grader.grade_submission(
+                                            fpath, 
+                                            selected_exam[4], 
+                                            selected_exam[5], 
+                                            selected_exam[6],
+                                            student_name=stu_name, # Force Name
+                                            strictness=strictness,
+                                            language=language
+                                        )
+                                        if "error" not in res:
+                                            db.save_submission(exam_id, stu_id, fpath, res)
+                                            graded_count += 1
+                            
+                            progress_bar.progress((idx + 1) / len(students))
+                        
+                        if graded_count > 0:
+                            st.success(f"Successfully batch graded {graded_count} students!")
+                            st.rerun()
+                        else:
+                            st.info("No pending uploads found to grade.")
+                    else:
+                        st.error("Select a model first.")
+
+                st.divider()
+
+                # Per Student Row
+                for stu in students: # (id, name, roll, cid)
+                    stu_id = stu[0]
+                    stu_name = stu[1]
+                    
+                    # Card Style
+                    st.markdown(f"""<div class="student-card"><h4>👤 {stu_name} <small>({stu[2]})</small></h4></div>""", unsafe_allow_html=True)
+                    
+                    col_up, col_act = st.columns([2, 1])
+                    
+                    # Check submission status
+                    sub = db.get_submission(exam_id, stu_id)
+                    status = sub[6] if sub else "Not Uploaded"
+                    
+                    with col_up:
+                        st.caption(f"Status: {status}")
+                        # Unique key allows access in Batch Grading
+                        upl_file = st.file_uploader(f"Upload Answer Sheet", type=['jpg', 'png'], key=f"u_{stu_id}", label_visibility="collapsed")
+                    
+                    with col_act:
+                        if upl_file and selected_model:
+                            if st.button(f"Grade Individual", key=f"g_{stu_id}"):
+                                with st.spinner(f"Grading {stu_name}..."):
+                                    fpath = save_uploaded_file(upl_file)
+                                    if fpath:
+                                        grader = AIGrader(api_key, selected_model)
+                                        res = grader.grade_submission(
+                                            fpath, 
+                                            selected_exam[4], 
+                                            selected_exam[5], 
+                                            selected_exam[6],
+                                            student_name=stu_name, # Force Name
+                                            strictness=strictness,
+                                            language=language
+                                        )
+                                        if "error" not in res:
+                                            db.save_submission(exam_id, stu_id, fpath, res)
+                                            st.success("Graded!")
+                                            st.rerun()
+                                        else:
+                                            st.error(res['error'])
+                    
+                    # Show Result if Graded
+                    if sub and sub[4]: # grades_json
+                        grades = json.loads(sub[4])
+                        with st.expander("View Report Card", expanded=False):
+                            st.markdown(f"""
+                            <div class="report-card">
+                                <div class="score-big">{grades.get('total_score_obtained')} / {grades.get('max_score')}</div>
+                                <p><b>Feedback:</b> {grades.get('overall_feedback')}</p>
+                            </div>
+                            """, unsafe_allow_html=True)
+                            st.json(grades)
+
+                st.divider()
+                if st.button("📢 Publish All Results to Parents"):
+                    db.publish_results(exam_id)
+                    st.success("Results Published!")
+            else:
+                st.info("No exams found for this class.")
+
+# --- Parent Dashboard ---
+elif role == "Parent/Student":
+    st.markdown('<h1 class="main-header">👨‍👩‍👧 Parent Dashboard</h1>', unsafe_allow_html=True)
+    
+    all_classes = db.get_all_classes()
+    if all_classes:
+        c_opts = {c[1]: c[0] for c in all_classes}
+        p_class = st.selectbox("Select Class", list(c_opts.keys()))
+        p_cid = c_opts[p_class]
+        
+        p_students = db.get_students_by_class(p_cid)
+        if p_students:
+            s_opts = {s[1]: s[0] for s in p_students}
+            p_student_name = st.selectbox("Select Student Name", list(s_opts.keys()))
+            p_sid = s_opts[p_student_name]
+            
+            st.divider()
+            st.subheader(f"Results for {p_student_name}")
+            
+            results = db.get_student_results(p_sid) # (id, exam_name, subject, grades_json, status)
+            
+            if results:
+                for res in results:
+                    exam_name = res[1]
+                    subject = res[2]
+                    grades = json.loads(res[3])
+                    
+                    with st.expander(f"{exam_name} - {subject}", expanded=True):
+                        st.markdown(f"""
+                        <div class="report-card">
+                            <h3>{exam_name}</h3>
+                            <div class="score-big">{grades.get('total_score_obtained')} / {grades.get('max_score')}</div>
+                        </div>
+                        """, unsafe_allow_html=True)
+                        
+                        st.subheader("Feedback")
+                        st.info(grades.get('overall_feedback'))
+                        
+                        st.subheader("Real World Connections 🌍")
+                        st.success(grades.get('real_world_connections', 'Not available'))
+                        
+                        st.subheader("Areas for Improvement")
+                        for p in grades.get('improvement_pointers', []):
+                            st.markdown(f"- {p}")
+            else:
+                st.info("No published results yet.")
+        else:
+            st.info("No students in this class.")
+import streamlit as st
+import os
+from ai_engine import AIGrader
+from database import DatabaseManager
+from utils import save_uploaded_file, cleanup_temp_files
+import json
+
+# Page Config
 st.set_page_config(page_title="AI Answer Grader", layout="wide", page_icon="📝")
 
 # Initialize DB
