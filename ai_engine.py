@@ -22,22 +22,32 @@ class AIGrader:
             for m in genai.list_models():
                 if 'generateContent' in m.supported_generation_methods:
                     models.append(m.name)
-            # Sort to keep consistent, maybe prefer flash/pro models at top if available
             models.sort(reverse=True) 
             return models
         except Exception as e:
             return []
 
-    def grade_submission(self, image_path, question_paper, answer_key, max_marks, student_level="High School"):
+    def grade_submission(self, image_path, question_paper, answer_key, max_marks, student_level="High School", strictness="Moderate"):
         """
-        Grades the answer sheet image against the provided context.
+        Grades the answer sheet image against the provided context with strictness control.
         """
         
         img = Image.open(image_path)
 
+        strictness_prompt = ""
+        if strictness == "Strict":
+            strictness_prompt = "Be very strict. Deduct marks for minor errors, spelling mistakes, and lack of clarity. Expect high precision."
+        elif strictness == "Lenient":
+            strictness_prompt = "Be lenient. Award marks for partial understanding and effort. Ignore minor spelling or grammatical errors if the concept is understood."
+        else:
+            strictness_prompt = "Be moderate. Balance precision with understanding. Grade fairly based on the rubric."
+
         prompt = f"""
         You are an expert academic grader for {student_level} students in Tamil Nadu, India. 
         Your task is to grade the handwritten answer sheet provided in the image.
+        
+        **Grading Mode:** {strictness}
+        {strictness_prompt}
         
         **Context:**
         - Question Paper: {question_paper}
@@ -46,10 +56,11 @@ class AIGrader:
         
         **Instructions:**
         1. **Analyze the Image**: Read the handwritten answers carefully. Handle messy handwriting gracefully.
-        2. **Grade**: Assign marks for each question based on the Answer Key. Be fair and constructive.
+        2. **Grade**: Assign marks for each question based on the Answer Key and the Grading Mode.
         3. **Feedback**: Provide specific feedback for each answer. Point out what was correct and what was missing.
         4. **Improvement**: Suggest how the student can improve for next time.
-        5. **Output Format**: Return the result strictly in JSON format.
+        5. **Real World Context**: For every major concept, explain its importance in real life.
+        6. **Output Format**: Return the result strictly in JSON format.
         
         **JSON Structure:**
         {{
@@ -73,13 +84,13 @@ class AIGrader:
             "concepts_to_revise": [
                 "Concept 1",
                 "Concept 2"
-            ]
+            ],
+            "real_world_connections": "A short paragraph explaining the real-world importance of the topics covered in this exam."
         }}
         """
 
         try:
             response = self.model.generate_content([prompt, img])
-            # Clean up json string if it contains markdown formatting
             text_response = response.text.strip()
             if text_response.startswith("```json"):
                 text_response = text_response[7:-3]
