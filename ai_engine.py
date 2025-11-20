@@ -27,9 +27,9 @@ class AIGrader:
         except Exception as e:
             return []
 
-    def grade_submission(self, image_path, question_paper, answer_key, max_marks, student_level="High School", strictness="Moderate"):
+    def grade_submission(self, image_path, question_paper, answer_key, max_marks, student_name, student_level="High School", strictness="Moderate", language="English"):
         """
-        Grades the answer sheet image against the provided context with strictness control.
+        Grades the answer sheet image against the provided context with strictness control and language support.
         """
         
         img = Image.open(image_path)
@@ -42,12 +42,22 @@ class AIGrader:
         else:
             strictness_prompt = "Be moderate. Balance precision with understanding. Grade fairly based on the rubric."
 
+        lang_prompt = ""
+        if language == "Tamil":
+            lang_prompt = "Provide the 'overall_feedback', 'improvement_pointers', and 'real_world_connections' in Tamil language. Keep technical terms in English if needed for clarity, but the explanation should be in Tamil."
+        else:
+            lang_prompt = "Provide all feedback and explanations in English."
+
         prompt = f"""
         You are an expert academic grader for {student_level} students in Tamil Nadu, India. 
         Your task is to grade the handwritten answer sheet provided in the image.
         
+        **Student Name:** {student_name} (Use this name in the report)
         **Grading Mode:** {strictness}
         {strictness_prompt}
+        
+        **Language Requirement:**
+        {lang_prompt}
         
         **Context:**
         - Question Paper: {question_paper}
@@ -64,7 +74,7 @@ class AIGrader:
         
         **JSON Structure:**
         {{
-            "student_name": "Extract if visible, else 'Unknown'",
+            "student_name": "{student_name}",
             "total_score_obtained": float,
             "max_score": {max_marks},
             "question_wise_breakdown": [
@@ -100,12 +110,14 @@ class AIGrader:
         except Exception as e:
             return {"error": str(e)}
 
-    def generate_study_plan(self, grading_result):
+    def generate_study_plan(self, grading_result, language="English"):
         """
         Generates a personalized study plan based on the grading result.
         """
+        lang_prompt = "in Tamil" if language == "Tamil" else "in English"
+        
         prompt = f"""
-        Based on the following grading result, create a short, motivating study plan for the student.
+        Based on the following grading result, create a short, motivating study plan for the student {lang_prompt}.
         Focus on the 'concepts_to_revise'. Explain *why* these concepts are important in real life (connect to real world applications).
         
         Grading Result:
